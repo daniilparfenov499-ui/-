@@ -1,0 +1,169 @@
+Отлично. Дальше **часть 4: главная со списком статей и страница категории**. Статей в базе пока нет (форму сделаем в части 5), поэтому сейчас проверим, что страницы открываются и показывают «пока нет статей».
+
+**1. Создайте контроллер**
+В терминале (папка `my-app`):
+```
+php artisan make:controller ArticleController
+```
+Откройте `app/Http/Controllers/ArticleController.php` и замените всё содержимое на:
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Article;
+use App\Models\Category;
+
+class ArticleController extends Controller
+{
+    public function index()
+    {
+        $articles = Article::where('is_published', true)
+            ->with(['category', 'user'])
+            ->latest()
+            ->paginate(6);
+
+        return view('home', compact('articles'));
+    }
+
+    public function firstCategory()
+    {
+        $category = Category::orderBy('id')->firstOrFail();
+
+        return redirect()->route('category.show', $category);
+    }
+
+    public function category(Category $category)
+    {
+        $articles = $category->articles()
+            ->where('is_published', true)
+            ->with(['category', 'user'])
+            ->latest()
+            ->paginate(6);
+
+        $categories = Category::orderBy('id')->get();
+
+        return view('category', compact('category', 'categories', 'articles'));
+    }
+}
+```
+
+**2. Маршруты**
+Откройте `routes/web.php`. Вверху добавьте строку `use App\Http\Controllers\ArticleController;` (после `<?php`). Маршрут `'/'` замените на эти три, остальные (`journalist`, `admin`) оставьте:
+```php
+Route::get('/', [ArticleController::class, 'index'])->name('home');
+Route::get('/category', [ArticleController::class, 'firstCategory'])->name('category');
+Route::get('/category/{category:slug}', [ArticleController::class, 'category'])->name('category.show');
+```
+
+**3. Ссылка «Категория» в шапке**
+В `components/header.blade.php` замените `href="#"` на `href="{{ route('category') }}"`.
+
+**4. Карточка статьи (компонент)**
+Новый файл `resources/views/components/article-card.blade.php`:
+```blade
+@props(['article'])
+
+<article class="article-card">
+    <h3><a href="#">{{ $article->title }}</a></h3>
+    <p>
+        <a href="{{ route('category.show', $article->category) }}">{{ $article->category->name }}</a>
+        · Автор: {{ $article->user->login }}
+    </p>
+    <p>{{ \Illuminate\Support\Str::limit($article->body, 160) }}</p>
+</article>
+```
+
+**5. Пагинация**
+Новая папка `resources/views/pagination`, в ней файл `custom.blade.php`:
+```blade
+@if ($paginator->hasPages())
+    <div class="pagination">
+        @if (! $paginator->onFirstPage())
+            <a href="{{ $paginator->previousPageUrl() }}">&larr;</a>
+        @endif
+
+        @foreach ($elements as $element)
+            @if (is_array($element))
+                @foreach ($element as $page => $url)
+                    @if ($page == $paginator->currentPage())
+                        <span class="current">{{ $page }}</span>
+                    @else
+                        <a href="{{ $url }}">{{ $page }}</a>
+                    @endif
+                @endforeach
+            @endif
+        @endforeach
+
+        @if ($paginator->hasMorePages())
+            <a href="{{ $paginator->nextPageUrl() }}">&rarr;</a>
+        @endif
+    </div>
+@endif
+```
+
+**6. Главная**
+Новый файл `resources/views/home.blade.php` (ваш `welcome.blade.php` не трогаем, он останется как запасной):
+```blade
+@extends('layouts.app')
+
+@section('title', 'Главная')
+
+@section('content')
+    <section class="content">
+        <h2>Все статьи</h2>
+
+        @forelse ($articles as $article)
+            <x-article-card :article="$article" />
+        @empty
+            <p>Пока нет ни одной статьи.</p>
+        @endforelse
+
+        {{ $articles->links('pagination.custom') }}
+    </section>
+@endsection
+```
+
+**7. Страница категории**
+Новый файл `resources/views/category.blade.php`:
+```blade
+@extends('layouts.app')
+
+@section('title', $category->name)
+
+@section('content')
+    <section class="content">
+        <h2>Категория: {{ $category->name }}</h2>
+
+        <div class="category-tabs">
+            @foreach ($categories as $item)
+                <a href="{{ route('category.show', $item) }}">{{ $item->name }}</a>
+            @endforeach
+        </div>
+
+        @forelse ($articles as $article)
+            <x-article-card :article="$article" />
+        @empty
+            <p>В этой категории пока нет статей.</p>
+        @endforelse
+
+        {{ $articles->links('pagination.custom') }}
+    </section>
+@endsection
+```
+
+**8. Немного стилей**
+В конец `resources/css/style.css` добавьте:
+```css
+.content { padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+.article-card { background: #fff; border: 3px solid black; padding: 15px; }
+.category-tabs { display: flex; gap: 10px; flex-wrap: wrap; }
+.category-tabs a, .pagination a, .pagination span { border: 2px solid black; padding: 5px 12px; background: #fff; color: black; text-decoration: none; }
+.pagination { display: flex; gap: 6px; }
+.pagination .current { background: #176baf; color: #fff; }
+```
+
+**9. Проверка**
+Сохраните всё, нажмите `Ctrl+F5` на `http://127.0.0.1:8000`. На главной должно быть «Все статьи» и «Пока нет ни одной статьи». По ссылке «Категория» откроется `/category/characters` с кнопками трёх категорий.
+
+Что покажет страница? Если всё открывается, переходим к **части 5: форма журналиста**, после неё появятся первые статьи.
