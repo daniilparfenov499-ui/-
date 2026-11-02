@@ -1,4 +1,4 @@
-Отлично. Дальше **часть 4: главная со списком статей и страница категории**. Статей в базе пока нет (форму сделаем в части 5), поэтому сейчас проверим, что страницы открываются и показывают «пока нет статей».
+заОтлично. Дальше **часть 4: главная со списком статей и страница категории**. Статей в базе пока нет (форму сделаем в части 5), поэтому сейчас проверим, что страницы открываются и показывают «пока нет статей».
 
 **1. Создайте контроллер**
 В терминале (папка `my-app`):
@@ -167,3 +167,219 @@ Route::get('/category/{category:slug}', [ArticleController::class, 'category'])-
 Сохраните всё, нажмите `Ctrl+F5` на `http://127.0.0.1:8000`. На главной должно быть «Все статьи» и «Пока нет ни одной статьи». По ссылке «Категория» откроется `/category/characters` с кнопками трёх категорий.
 
 Что покажет страница? Если всё открывается, переходим к **части 5: форма журналиста**, после неё появятся первые статьи.
+
+
+
+
+
+
+
+Отлично. Меняем порядок: сначала **регистрация и вход**, потом форма журналиста. Статья записывается с автором (`user_id`), а раздел «Журналист» по заданию открывается только авторизованным.
+
+**Часть 5: регистрация и вход**
+
+**1. Контроллер**
+В терминале (папка `my-app`):
+```
+php artisan make:controller AuthController
+```
+Откройте `app/Http/Controllers/AuthController.php` и замените всё содержимое на:
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class AuthController extends Controller
+{
+    public function showRegister()
+    {
+        return view('auth.register');
+    }
+
+    public function register(Request $request)
+    {
+        $data = $request->validate([
+            'login' => ['required', 'string', 'min:3', 'max:50', 'unique:users,login'],
+            'password' => ['required', 'string', 'min:6', 'confirmed'],
+        ], [
+            'login.required' => 'Введите логин.',
+            'login.min' => 'Логин должен быть не короче 3 символов.',
+            'login.unique' => 'Такой логин уже занят.',
+            'password.required' => 'Введите пароль.',
+            'password.min' => 'Пароль должен быть не короче 6 символов.',
+            'password.confirmed' => 'Пароли не совпадают.',
+        ]);
+
+        $user = User::create([
+            'login' => $data['login'],
+            'name' => $data['login'],
+            'password' => $data['password'],
+        ]);
+
+        Auth::login($user);
+        $request->session()->regenerate();
+
+        return redirect()->route('home');
+    }
+
+    public function showLogin()
+    {
+        return view('auth.login');
+    }
+
+    public function login(Request $request)
+    {
+        $credentials = $request->validate([
+            'login' => ['required', 'string'],
+            'password' => ['required', 'string'],
+        ], [
+            'login.required' => 'Введите логин.',
+            'password.required' => 'Введите пароль.',
+        ]);
+
+        if (! Auth::attempt($credentials)) {
+            return back()
+                ->withErrors(['login' => 'Неверный логин или пароль.'])
+                ->onlyInput('login');
+        }
+
+        $request->session()->regenerate();
+
+        return redirect()->intended(route('home'));
+    }
+
+    public function logout(Request $request)
+    {
+        Auth::logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect()->route('home');
+    }
+}
+```
+
+Пароль хешируется сам: в модели `User` уже есть `'password' => 'hashed'`.
+
+**2. Маршруты**
+В `routes/web.php` добавьте вверху `use App\Http\Controllers\AuthController;` (рядом с другими `use`). В конец файла допишите:
+```php
+Route::middleware('guest')->group(function () {
+    Route::get('/register', [AuthController::class, 'showRegister'])->name('register');
+    Route::post('/register', [AuthController::class, 'register'])->name('register.store');
+    Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
+    Route::post('/login', [AuthController::class, 'login'])->name('login.store');
+});
+
+Route::post('/logout', [AuthController::class, 'logout'])
+    ->middleware('auth')
+    ->name('logout');
+```
+Имя `login` обязательно: на него перенаправляет защита `auth`.
+
+**3. Страницы**
+Правой кнопкой на `resources/views` → **New Folder** → `auth`. В ней два файла.
+
+`auth/register.blade.php`:
+```blade
+@extends('layouts.app')
+
+@section('title', 'Регистрация')
+
+@section('content')
+    <section class="content">
+        <h2>Регистрация</h2>
+
+        <form method="POST" action="{{ route('register.store') }}" class="form">
+            @csrf
+
+            <label for="login">Логин</label>
+            <input id="login" type="text" name="login" value="{{ old('login') }}" required>
+            @error('login') <div class="field-error">{{ $message }}</div> @enderror
+
+            <label for="password">Пароль</label>
+            <input id="password" type="password" name="password" required>
+            @error('password') <div class="field-error">{{ $message }}</div> @enderror
+
+            <label for="password_confirmation">Повторите пароль</label>
+            <input id="password_confirmation" type="password" name="password_confirmation" required>
+
+            <button type="submit" class="btn">Зарегистрироваться</button>
+            <p>Уже есть аккаунт? <a href="{{ route('login') }}">Войти</a></p>
+        </form>
+    </section>
+@endsection
+```
+
+`auth/login.blade.php`:
+```blade
+@extends('layouts.app')
+
+@section('title', 'Вход')
+
+@section('content')
+    <section class="content">
+        <h2>Вход</h2>
+
+        <form method="POST" action="{{ route('login.store') }}" class="form">
+            @csrf
+
+            <label for="login">Логин</label>
+            <input id="login" type="text" name="login" value="{{ old('login') }}" required>
+            @error('login') <div class="field-error">{{ $message }}</div> @enderror
+
+            <label for="password">Пароль</label>
+            <input id="password" type="password" name="password" required>
+            @error('password') <div class="field-error">{{ $message }}</div> @enderror
+
+            <button type="submit" class="btn">Войти</button>
+            <p>Нет аккаунта? <a href="{{ route('register') }}">Зарегистрироваться</a></p>
+        </form>
+    </section>
+@endsection
+```
+
+`@csrf` в форме обязателен, без него будет ошибка 419.
+
+**4. Шапка: вход, регистрация, выход**
+В `components/header.blade.php` внутри `<div class="top-bar">`, сразу после строки с `logo-text`, вставьте:
+```blade
+<div class="auth-bar">
+    @auth
+        <span>{{ auth()->user()->login }}</span>
+        <form method="POST" action="{{ route('logout') }}" class="inline-form">
+            @csrf
+            <button type="submit" class="link-button">Выйти</button>
+        </form>
+    @else
+        <a href="{{ route('login') }}">Войти</a>
+        <a href="{{ route('register') }}">Регистрация</a>
+    @endauth
+</div>
+```
+
+**5. Стили**
+Откройте `style.css` (щёлкните в тексте файла, не в терминале), нажмите `Ctrl+End` и вставьте:
+```css
+.auth-bar { display: flex; gap: 15px; align-items: center; font-weight: bold; }
+.auth-bar a, .link-button { color: black; text-decoration: none; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.inline-form { display: inline; margin: 0; }
+.form { background: #fff; border: 3px solid black; padding: 20px; display: flex; flex-direction: column; gap: 8px; max-width: 500px; }
+.form input, .form select, .form textarea { border: 2px solid black; padding: 8px; width: 100%; }
+.btn { background: #176baf; color: #fff; border: 2px solid black; padding: 8px 16px; font-weight: bold; cursor: pointer; align-self: flex-start; }
+.field-error { color: #b00020; font-weight: bold; }
+```
+
+Сохраните все файлы (`Ctrl+S`).
+
+**6. Проверка**
+1. Откройте `http://127.0.0.1:8000/register`, придумайте логин и пароль (от 6 символов, повторите его), нажмите «Зарегистрироваться». Вас вернёт на главную, в шапке появится ваш логин и «Выйти».
+2. Нажмите «Выйти», затем «Войти» и войдите тем же логином.
+3. Попробуйте ввести неверный пароль: должна появиться красная ошибка.
+4. В pgAdmin откройте **users → View/Edit Data → All Rows**: в колонке `password` должен быть хеш (длинная строка), а не ваш пароль.
+
+Напишите, что получилось, или пришлите ошибку. Дальше **часть 6: форма журналиста**.
