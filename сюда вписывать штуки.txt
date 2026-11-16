@@ -1,3 +1,270 @@
+Дальше **часть 6: форма журналиста**. Пишем статью (заголовок, категория, текст), а потом можно её изменить или удалить. Раздел будет доступен только после входа.
+
+**1. Контроллер**
+В терминале (папка `my-app`):
+```
+php artisan make:controller JournalistController
+```
+Откройте `app/Http/Controllers/JournalistController.php` и замените всё содержимое на:
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Article;
+use App\Models\Category;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class JournalistController extends Controller
+{
+    public function index()
+    {
+        $categories = Category::orderBy('name')->get();
+
+        $myArticles = Article::where('user_id', Auth::id())
+            ->with('category')
+            ->latest()
+            ->get();
+
+        return view('journalist', compact('categories', 'myArticles'));
+    }
+
+    public function store(Request $request)
+    {
+        $data = $this->validated($request);
+        $data['user_id'] = Auth::id();
+
+        Article::create($data);
+
+        return redirect()->route('home')->with('status', 'Статья опубликована.');
+    }
+
+    public function edit(Article $article)
+    {
+        $this->authorizeOwner($article);
+
+        $categories = Category::orderBy('name')->get();
+
+        return view('journalist_edit', compact('article', 'categories'));
+    }
+
+    public function update(Request $request, Article $article)
+    {
+        $this->authorizeOwner($article);
+
+        $article->update($this->validated($request));
+
+        return redirect()->route('journalist')->with('status', 'Статья обновлена.');
+    }
+
+    public function destroy(Article $article)
+    {
+        $this->authorizeOwner($article);
+
+        $article->delete();
+
+        return redirect()->route('journalist')->with('status', 'Статья удалена.');
+    }
+
+    private function authorizeOwner(Article $article): void
+    {
+        abort_unless($article->user_id === Auth::id(), 403);
+    }
+
+    private function validated(Request $request): array
+    {
+        return $request->validate([
+            'title' => ['required', 'string', 'max:255'],
+            'category_id' => ['required', 'exists:categories,id'],
+            'body' => ['required', 'string', 'min:10'],
+        ], [
+            'title.required' => 'Введите заголовок.',
+            'title.max' => 'Заголовок не длиннее 255 символов.',
+            'category_id.required' => 'Выберите категорию.',
+            'category_id.exists' => 'Такой категории не существует.',
+            'body.required' => 'Введите текст статьи.',
+            'body.min' => 'Текст статьи слишком короткий (минимум 10 символов).',
+        ]);
+    }
+}
+```
+
+Метод `authorizeOwner` нужен, чтобы чужие статьи нельзя было менять и удалять.
+
+**2. Маршруты**
+В `routes/web.php`:
+1. Вверху добавьте `use App\Http\Controllers\JournalistController;` рядом с остальными `use`.
+2. **Удалите** старый маршрут `Route::get('/journalist', ...)->name('journalist');`.
+3. В конец файла добавьте:
+```php
+Route::middleware('auth')->prefix('journalist')->group(function () {
+    Route::get('/', [JournalistController::class, 'index'])->name('journalist');
+    Route::post('/', [JournalistController::class, 'store'])->name('journalist.store');
+    Route::get('/{article}/edit', [JournalistController::class, 'edit'])->name('journalist.edit');
+    Route::put('/{article}', [JournalistController::class, 'update'])->name('journalist.update');
+    Route::delete('/{article}', [JournalistController::class, 'destroy'])->name('journalist.destroy');
+});
+```
+
+Обёртка `auth` закрывает раздел от гостей: их перекинет на страницу входа.
+
+**3. Общая форма (partial)**
+В папке `resources/views/partials` создайте файл `article-form.blade.php`:
+```blade
+@php
+    $article = $article ?? null;
+    $method = $method ?? 'POST';
+@endphp
+
+<form method="POST" action="{{ $action }}" class="form">
+    @csrf
+    @if ($method !== 'POST')
+        @method($method)
+    @endif
+
+    <label for="title">Заголовок</label>
+    <input id="title" type="text" name="title" maxlength="255" required
+           value="{{ old('title', $article?->title) }}">
+    @error('title') <div class="field-error">{{ $message }}</div> @enderror
+
+    <label for="category_id">Категория</label>
+    <select id="category_id" name="category_id" required>
+        <option value="">— выберите категорию —</option>
+        @foreach ($categories as $category)
+            <option value="{{ $category->id }}" @selected(old('category_id', $article?->category_id) == $category->id)>
+                {{ $category->name }}
+            </option>
+        @endforeach
+    </select>
+    @error('category_id') <div class="field-error">{{ $message }}</div> @enderror
+
+    <label for="body">Текст статьи</label>
+    <textarea id="body" name="body" rows="10" required>{{ old('body', $article?->body) }}</textarea>
+    @error('body') <div class="field-error">{{ $message }}</div> @enderror
+
+    <button type="submit" class="btn">{{ $submit }}</button>
+</form>
+```
+
+**4. Страница журналиста**
+Откройте `resources/views/journalist.blade.php`, удалите всё содержимое (`Ctrl+A`, `Delete`) и впишите:
+```blade
+@extends('layouts.app')
+
+@section('title', 'Журналист')
+
+@section('content')
+    <section class="content">
+        <h2>Новая статья</h2>
+
+        @include('partials.article-form', [
+            'action' => route('journalist.store'),
+            'method' => 'POST',
+            'submit' => 'Опубликовать',
+            'article' => null,
+        ])
+
+        <h2>Мои статьи</h2>
+
+        @forelse ($myArticles as $item)
+            <div class="my-article">
+                <div>
+                    <strong>{{ $item->title }}</strong><br>
+                    {{ $item->category->name }} · {{ $item->created_at->format('d.m.Y H:i') }}
+                </div>
+                <div class="my-article-actions">
+                    <a class="btn" href="{{ route('journalist.edit', $item) }}">Изменить</a>
+                    <form method="POST" action="{{ route('journalist.destroy', $item) }}"
+                          class="inline-form" onsubmit="return confirm('Удалить статью?')">
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit" class="btn btn-danger">Удалить</button>
+                    </form>
+                </div>
+            </div>
+        @empty
+            <p>Вы ещё не написали ни одной статьи.</p>
+        @endforelse
+    </section>
+@endsection
+```
+
+**5. Страница редактирования**
+Новый файл `resources/views/journalist_edit.blade.php`:
+```blade
+@extends('layouts.app')
+
+@section('title', 'Редактирование статьи')
+
+@section('content')
+    <section class="content">
+        <h2>Редактирование статьи</h2>
+
+        @include('partials.article-form', [
+            'action' => route('journalist.update', $article),
+            'method' => 'PUT',
+            'submit' => 'Сохранить',
+            'article' => $article,
+        ])
+
+        <p><a href="{{ route('journalist') }}">&larr; Назад к моим статьям</a></p>
+    </section>
+@endsection
+```
+
+**6. Сообщение об успехе**
+В `resources/views/layouts/app.blade.php` внутри `<main>`, перед `@yield('content')`, добавьте:
+```blade
+@if (session('status'))
+    <div class="flash">{{ session('status') }}</div>
+@endif
+```
+
+**7. Стили**
+Откройте `style.css`, **щёлкните в тексте файла** (не в терминале), `Ctrl+End`, Enter и вставьте:
+```css
+.flash { margin: 20px 20px 0; padding: 10px 15px; background: #d9f7d9; border: 2px solid black; font-weight: bold; }
+.my-article { background: #fff; border: 2px solid black; padding: 12px 15px; display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap; }
+.my-article-actions { display: flex; gap: 8px; }
+.btn { text-decoration: none; display: inline-block; }
+.btn-danger { background: #c62828; }
+```
+Сохраните все файлы (`Ctrl+S`).
+
+**8. Проверка**
+1. Выйдите из аккаунта и откройте `http://127.0.0.1:8000/journalist`: вас должно перекинуть на «Вход».
+2. Войдите. Откроется страница журналиста с формой.
+3. Напишите статью (заголовок, категория, текст от 10 символов) и нажмите «Опубликовать». Вас вернёт на главную, там будет зелёное сообщение и ваша статья под блоком про Genshin.
+4. Откройте «Категория» и выберите ту категорию, что указали: статья должна быть и там.
+5. На странице журналиста нажмите «Изменить», поправьте текст, сохраните. Затем попробуйте «Удалить».
+6. Создайте больше 6 статей, чтобы на главной появилась пагинация.
+7. Оставьте поля пустыми и отправьте форму: должны появиться красные ошибки.
+
+Что получилось? Если где-то вылетит ошибка, пришлите фото, разберём. Следующим шагом можно добавить страницу статьи с полным текстом, чтобы ссылки в карточках работали.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 заОтлично. Дальше **часть 4: главная со списком статей и страница категории**. Статей в базе пока нет (форму сделаем в части 5), поэтому сейчас проверим, что страницы открываются и показывают «пока нет статей».
 
 **1. Создайте контроллер**
